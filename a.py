@@ -125,12 +125,12 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
             # --- New functionality: Scroll to and click 'Run All' button ---
             print("  [Action] Attempting to find and click 'Run All' button...")
             try:
-                # Use a robust selector for the 'Run All' button. Kaggle often uses 'data-test' attributes.
-                # If 'button:has-text("Run All")' doesn't work, you might need to inspect the page
-                # for a more specific selector like 'button[data-test="run-all-button"]'
-                run_all_button = page.locator('button:has-text("Run All")')
-                await run_all_button.wait_for(state="visible", timeout=15000)
-                await run_all_button.wait_for(state="enabled", timeout=15000)
+                # Kaggle often uses divs for buttons. Searching by text is the most robust way.
+                # We use .first to ensure we target the primary interaction element.
+                run_all_button = page.get_by_text("Run All", exact=True).first
+                
+                # Wait for the element to be visible. 'enabled' is not a valid state for wait_for.
+                await run_all_button.wait_for(state="visible", timeout=30000)
                 await run_all_button.scroll_into_view_if_needed()
                 print("  [Action] 'Run All' button scrolled into view.")
                 print("  [Action] Waiting for 30 seconds before clicking 'Run All'...")
