@@ -136,43 +136,57 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
                     print("  [Suggestion] Click the 'Edit' button in the browser UI to open the workspace.")
                 await page.wait_for_timeout(15000)
 
-            # --- New functionality: Handle "Restart & Clear Cell Outputs" if in Draft mode ---
-            print("  [Action] Checking for 'Restart & Clear Cell Outputs' button (Draft mode)...")
+            # --- Advanced functionality: Handle "Restart & Clear Cell Outputs" ---
+            print("  [Action] Searching for 'Restart & Clear Cell Outputs' (Advanced Method)...")
             try:
-                # Use a robust selector for the "Restart & Clear Cell Outputs" button.
-                # Based on the provided HTML snippet, it's a <p> tag with specific text.
-                restart_clear_button = page.get_by_text("Restart & Clear Cell Outputs", exact=True).first
-                
-                # Wait for the element to be visible and enabled
-                await restart_clear_button.wait_for(state="visible", timeout=10000)
-                await restart_clear_button.wait_for(state="enabled", timeout=5000) # Check if it's clickable
-                await restart_clear_button.scroll_into_view_if_needed()
-                print("  [Action] 'Restart & Clear Cell Outputs' button found and scrolled into view.")
-                await restart_clear_button.click()
-                print("  [Action] 'Restart & Clear Cell Outputs' button clicked. Waiting for notebook to stabilize...")
-                await asyncio.sleep(10) # Give some time for the action to process
-            except Exception as e:
-                print(f"  [Info] 'Restart & Clear Cell Outputs' button not found or not clickable (likely not in Draft mode or already clear): {e}")
+                # These buttons are often inside the 'Run' menu. We try to open it to ensure rendering.
+                run_menu = page.get_by_text("Run", exact=True).first
+                if await run_menu.is_visible(timeout=5000):
+                    await run_menu.click()
+                    await asyncio.sleep(2)
 
-            # --- New functionality: Scroll to and click 'Run All' button ---
-            print("  [Action] Attempting to find and click 'Run All' button...")
-            try:
-                run_all_button = page.get_by_text("Run All", exact=True).first
+                restart_clear_button = page.get_by_text("Restart & Clear Cell Outputs", exact=True).first
+                # Wait for attachment (exists in DOM) rather than visibility to handle menu behavior
+                await restart_clear_button.wait_for(state="attached", timeout=10000)
                 
-                # Wait for visibility and then force scroll to center
-                await run_all_button.wait_for(state="visible", timeout=45000)
+                # Advanced click: dispatch_event bypasses visibility/interception checks
+                await restart_clear_button.dispatch_event("click")
+                print("  [Action] 'Restart & Clear Cell Outputs' triggered via JS event.")
                 
-                # Forceful scrolling logic
-                await run_all_button.scroll_into_view_if_needed()
-                await run_all_button.evaluate("el => el.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' })")
+                # Confirm if a 'Restart' dialog appears
+                confirm_btn = page.locator("button").get_by_text("Restart", exact=True).first
+                if await confirm_btn.is_visible(timeout=5000):
+                    await confirm_btn.click()
                 
-                print("  [Action] 'Run All' button centered in view.")
-                print("  [Action] Waiting for 30 seconds before clicking 'Run All'...")
-                await asyncio.sleep(30) # Explicit 30-second wait as requested
-                await run_all_button.click()
-                print("  [Action] 'Run All' button clicked.")
+                await asyncio.sleep(15) 
             except Exception as e:
-                print(f"  [Warning] Could not find or click 'Run All' button: {e}")
+                print(f"  [Info] Restart/Clear sequence skipped: {e}")
+
+            # --- Advanced functionality: Trigger 'Run All' ---
+            print("  [Action] Attempting 'Run All' via advanced JS dispatch...")
+            try:
+                # If not visible, try opening the Run menu as a fallback
+                if not await page.get_by_text("Run All", exact=True).first.is_visible():
+                    run_menu = page.get_by_text("Run", exact=True).first
+                    if await run_menu.is_visible():
+                        await run_menu.click()
+                        await asyncio.sleep(1)
+
+                run_all_button = page.get_by_text("Run All", exact=True).first
+                await run_all_button.wait_for(state="attached", timeout=45000)
+                
+                # Ensure button is in the center of the viewport via JS
+                await run_all_button.evaluate("el => el.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' })")
+                await asyncio.sleep(5)
+                
+                # Use JS dispatch for the click to ensure it bypasses any UI overlays
+                await run_all_button.dispatch_event("click")
+                print("  [Action] 'Run All' clicked via JS event.")
+                
+                print("  [Action] Waiting for 30 seconds to allow execution start...")
+                await asyncio.sleep(30) # Explicit 30-second wait as requested
+            except Exception as e:
+                print(f"  [Warning] Could not trigger 'Run All': {e}")
 
             print(f"Successfully opened {url}.")
             print(f"--- Starting Advanced Execution Monitoring ---")
@@ -201,21 +215,20 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
                     print("  [Monitor] Monitoring for disconnections and system popups...")
 
                     # 2. Advanced Session Guard (Reconnect & Auto-Run)
-                    # Check and click common popups
                     for action_text in ["Reconnect", "Dismiss", "Stay", "Wait", "Close"]:
                         btn = page.get_by_text(action_text, exact=False).first
                         if await btn.is_visible():
                             print(f"  [Monitor] System popup detected. Clicking '{action_text}'...")
-                            await btn.click()
+                            await btn.dispatch_event("click")
                             await asyncio.sleep(5)
 
                     # Check if Execution has stopped
                     run_all_btn = page.get_by_text("Run All", exact=True).first
-                    if await run_all_btn.is_visible():
+                    if await run_all_btn.is_visible(timeout=2000):
                         print("  [Monitor] Execution stopped or kernel idle. Re-triggering 'Run All'...")
                         await run_all_btn.evaluate("el => el.scrollIntoView({ behavior: 'auto', block: 'center' })")
                         await asyncio.sleep(2)
-                        await run_all_btn.click()
+                        await run_all_btn.dispatch_event("click")
 
                     # 3. Simulate Human Activity (Throttled: Har 5-7 mins mein ek baar)
                     now = asyncio.get_event_loop().time()
