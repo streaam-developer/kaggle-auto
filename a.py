@@ -36,34 +36,46 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
             context: BrowserContext = await p.chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 headless=False,
-                viewport={'width': 1280, 'height': 800},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                viewport={'width': 1366, 'height': 768},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 ignore_default_args=["--enable-automation"],
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
-                    "--disable-infobars"
+                    "--disable-infobars",
+                    "--disable-web-security",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                    "--allow-running-insecure-content"
                 ]
             )
 
             page: Page = context.pages[0] if context.pages else await context.new_page()
             
             # Stealth: Mask the webdriver property
-            await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            await page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                window.chrome = { runtime: {} };
+            """)
             
             # Handle console logs for debugging remote site behavior
             page.on("console", lambda msg: print(f"Browser Console: {msg.text}") if msg.type == "error" else None)
 
             print(f"Navigating to: {url}")
-            await page.goto(url, wait_until="networkidle", timeout=60000)
+            # Increased timeout and used 'domcontentloaded' to avoid hanging on minor asset 404s
+            await page.goto(url, wait_until="domcontentloaded", timeout=90000)
             
             # Check if we are in the editor or need to log in
             if "login" in page.url:
                 print("  [Action Required] Please log in to Kaggle in the browser window.")
             
-            # Give Kaggle time to load the actual notebook editor
-            await page.wait_for_timeout(10000)
+            # Wait for a key editor element to appear (the notebook container)
+            try:
+                await page.wait_for_selector(".workweek-workspace, .kj-editor", timeout=30000)
+                print("  [Verified] Kaggle editor environment detected.")
+            except:
+                print("  [Warning] Editor selector not found. The page might still be loading or require login.")
+                await page.wait_for_timeout(10000)
 
             print(f"Successfully opened {url}.")
             print(f"Waiting for {wait_hours} hours before entering indefinite hold...")
