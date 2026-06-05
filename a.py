@@ -136,6 +136,24 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
                     print("  [Suggestion] Click the 'Edit' button in the browser UI to open the workspace.")
                 await page.wait_for_timeout(15000)
 
+            # --- New functionality: Handle "Restart & Clear Cell Outputs" if in Draft mode ---
+            print("  [Action] Checking for 'Restart & Clear Cell Outputs' button (Draft mode)...")
+            try:
+                # Use a robust selector for the "Restart & Clear Cell Outputs" button.
+                # Based on the provided HTML snippet, it's a <p> tag with specific text.
+                restart_clear_button = page.get_by_text("Restart & Clear Cell Outputs", exact=True).first
+                
+                # Wait for the element to be visible and enabled
+                await restart_clear_button.wait_for(state="visible", timeout=10000)
+                await restart_clear_button.wait_for(state="enabled", timeout=5000) # Check if it's clickable
+                await restart_clear_button.scroll_into_view_if_needed()
+                print("  [Action] 'Restart & Clear Cell Outputs' button found and scrolled into view.")
+                await restart_clear_button.click()
+                print("  [Action] 'Restart & Clear Cell Outputs' button clicked. Waiting for notebook to stabilize...")
+                await asyncio.sleep(10) # Give some time for the action to process
+            except Exception as e:
+                print(f"  [Info] 'Restart & Clear Cell Outputs' button not found or not clickable (likely not in Draft mode or already clear): {e}")
+
             # --- New functionality: Scroll to and click 'Run All' button ---
             print("  [Action] Attempting to find and click 'Run All' button...")
             try:
@@ -160,14 +178,30 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
             print(f"--- Starting Advanced Execution Monitoring ---")
             print(f"Script will now keep the code running and handle disconnections.")
             start_time = asyncio.get_event_loop().time()
+            last_activity_time = 0
 
             while True:
-                # 1. Simulate Human Activity (Anti-Detection)
-                await simulate_activity(page)
-                
-                # 2. Advanced Session Guard (Reconnect & Auto-Run)
                 try:
-                    # Check and click common popups like 'Reconnect', 'Dismiss', or 'Stay'
+                    # 1. Live Log Extraction (Har loop mein check karega)
+                    current_logs = await page.evaluate("""() => {
+                        // Kaggle outputs are usually in these classes
+                        const outputDivs = document.querySelectorAll('.jp-OutputArea-output, .kj-output-area');
+                        return Array.from(outputDivs).map(div => div.innerText).join('\\n');
+                    }""")
+                    
+                    log_lines = [line for line in current_logs.splitlines() if line.strip()]
+                    
+                    # Terminal Clear karke last 100 lines dikhana
+                    os.system('cls' if os.name == 'nt' else 'clear')
+                    print(f"=== KAGGLE LIVE LOGS (Last 100 Lines) | Runtime: {(asyncio.get_event_loop().time() - start_time)/3600:.2f}h ===")
+                    print("-" * 60)
+                    for line in log_lines[-100:]:
+                        print(line)
+                    print("-" * 60)
+                    print("  [Monitor] Monitoring for disconnections and system popups...")
+
+                    # 2. Advanced Session Guard (Reconnect & Auto-Run)
+                    # Check and click common popups
                     for action_text in ["Reconnect", "Dismiss", "Stay", "Wait", "Close"]:
                         btn = page.get_by_text(action_text, exact=False).first
                         if await btn.is_visible():
@@ -176,24 +210,26 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
                             await asyncio.sleep(5)
 
                     # Check if Execution has stopped
-                    # Agar 'Run All' button visible hai, iska matlab kernel idle hai ya ruk gaya hai
                     run_all_btn = page.get_by_text("Run All", exact=True).first
                     if await run_all_btn.is_visible():
                         print("  [Monitor] Execution stopped or kernel idle. Re-triggering 'Run All'...")
                         await run_all_btn.evaluate("el => el.scrollIntoView({ behavior: 'auto', block: 'center' })")
                         await asyncio.sleep(2)
                         await run_all_btn.click()
+
+                    # 3. Simulate Human Activity (Throttled: Har 5-7 mins mein ek baar)
+                    now = asyncio.get_event_loop().time()
+                    if now - last_activity_time > random.randint(300, 450):
+                        await simulate_activity(page)
+                        last_activity_time = now
+
                 except Exception as monitor_err:
-                    # Monitoring errors ko ignore karenge taaki loop chalta rahe
+                    print(f"  [Warning] Monitor Loop encountered an error: {monitor_err}")
                     pass
 
-                # 3. Log Status
-                elapsed = asyncio.get_event_loop().time() - start_time
-                if int(elapsed) % 1800 < 450: # Har 30 mins mein status update
-                    print(f"  [Status] Script has been managing execution for {elapsed / 3600:.1f} hours.")
-
-                # 4. Randomized Wait (Bots se bachne ke liye interval change karte rahenge)
-                await asyncio.sleep(random.randint(180, 420)) 
+                # loop interval ko chota kiya hai taaki logs live update hon
+                # Anti-detection ke liye sleep time aur activity throttled hai
+                await asyncio.sleep(20) 
 
     except asyncio.CancelledError:
         print("Script interrupted by user.")
