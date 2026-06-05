@@ -13,14 +13,20 @@ async def simulate_activity(page: Page):
             for _ in range(random.randint(2, 5)):
                 direction = 1 if random.random() > 0.3 else -1 # 70% chance to scroll down
                 amount = random.randint(100, 300) * direction
-                await page.mouse.wheel(0, amount)
+                
+                # Advanced: Scroll the window and common Kaggle scrollable containers
+                await page.evaluate(f"""() => {{
+                    window.scrollBy(0, {amount});
+                    const container = document.querySelector('.jp-Notebook, .workweek-workspace, .kj-editor');
+                    if (container) container.scrollBy(0, {amount});
+                }}""")
                 await asyncio.sleep(random.uniform(0.2, 0.8))
             print("  [Keep-Alive] Performed reading scrolls.")
 
         elif action == "mouse_move":
             # Move mouse across several points to mimic looking at different cells
             for _ in range(random.randint(2, 4)):
-                x, y = random.randint(100, 1200), random.randint(100, 800)
+                x, y = random.randint(100, 1300), random.randint(100, 700)
                 # Using more steps for a slower, more human-like path
                 await page.mouse.move(x, y, steps=random.randint(15, 30))
                 await asyncio.sleep(random.uniform(0.1, 0.5))
@@ -65,7 +71,7 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
             context: BrowserContext = await p.chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 headless=False,
-                viewport={'width': 1920, 'height': 1080},
+                viewport={'width': 1366, 'height': 768},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                 ignore_default_args=["--enable-automation"],
                 args=[
@@ -129,10 +135,11 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
                 # We use .first to ensure we target the primary interaction element.
                 run_all_button = page.get_by_text("Run All", exact=True).first
                 
-                # Wait for the element to be visible. 'enabled' is not a valid state for wait_for.
+                # Wait for the element to be visible.
                 await run_all_button.wait_for(state="visible", timeout=30000)
-                await run_all_button.scroll_into_view_if_needed()
-                print("  [Action] 'Run All' button scrolled into view.")
+                # Use JavaScript to scroll it to the center of the screen
+                await run_all_button.evaluate("el => el.scrollIntoView({ behavior: 'smooth', block: 'center' })")
+                print("  [Action] 'Run All' button centered in view.")
                 print("  [Action] Waiting for 30 seconds before clicking 'Run All'...")
                 await asyncio.sleep(30) # Explicit 30-second wait as requested
                 await run_all_button.click()
