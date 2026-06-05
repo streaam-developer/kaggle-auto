@@ -9,17 +9,25 @@ async def simulate_activity(page: Page):
         action = random.choice(["scroll", "mouse_move", "key_nudge", "hover"])
         
         if action == "scroll":
-            # Simulate "reading" with multiple small scrolls
+            # Pehle mouse ko center mein move karein taaki sahi container target ho
+            await page.mouse.move(683, 384)
             for _ in range(random.randint(2, 5)):
                 direction = 1 if random.random() > 0.3 else -1 # 70% chance to scroll down
-                amount = random.randint(100, 300) * direction
+                amount = random.randint(200, 500) * direction
                 
-                # Advanced: Scroll the window and common Kaggle scrollable containers
-                await page.evaluate(f"""() => {{
-                    window.scrollBy(0, {amount});
-                    const container = document.querySelector('.jp-Notebook, .workweek-workspace, .kj-editor');
-                    if (container) container.scrollBy(0, {amount});
-                }}""")
+                # Deep Scroll: Ye script window aur Kaggle ke internal containers dono ko scroll karegi
+                await page.evaluate(f"""(amt) => {{
+                    window.scrollBy(0, amt);
+                    const selectors = ['.jp-Notebook', '.workweek-workspace', '.kj-editor', '[role="main"]', '.editor-container'];
+                    selectors.forEach(s => {{
+                        const el = document.querySelector(s);
+                        if (el) el.scrollBy(0, amt);
+                    }});
+                    // Fallback: Agar upar waale kaam na karein toh jo bhi scrollable div hai use scroll karo
+                    document.querySelectorAll('div').forEach(d => {{
+                        if (d.scrollHeight > d.clientHeight) d.scrollBy(0, amt);
+                    }});
+                }}""", amount)
                 await asyncio.sleep(random.uniform(0.2, 0.8))
             print("  [Keep-Alive] Performed reading scrolls.")
 
@@ -131,14 +139,15 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
             # --- New functionality: Scroll to and click 'Run All' button ---
             print("  [Action] Attempting to find and click 'Run All' button...")
             try:
-                # Kaggle often uses divs for buttons. Searching by text is the most robust way.
-                # We use .first to ensure we target the primary interaction element.
                 run_all_button = page.get_by_text("Run All", exact=True).first
                 
-                # Wait for the element to be visible.
-                await run_all_button.wait_for(state="visible", timeout=30000)
-                # Use JavaScript to scroll it to the center of the screen
-                await run_all_button.evaluate("el => el.scrollIntoView({ behavior: 'smooth', block: 'center' })")
+                # Wait for visibility and then force scroll to center
+                await run_all_button.wait_for(state="visible", timeout=45000)
+                
+                # Forceful scrolling logic
+                await run_all_button.scroll_into_view_if_needed()
+                await run_all_button.evaluate("el => el.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' })")
+                
                 print("  [Action] 'Run All' button centered in view.")
                 print("  [Action] Waiting for 30 seconds before clicking 'Run All'...")
                 await asyncio.sleep(30) # Explicit 30-second wait as requested
@@ -148,27 +157,43 @@ async def open_kaggle_notebook_and_wait(url: str, wait_hours: int = 5, user_data
                 print(f"  [Warning] Could not find or click 'Run All' button: {e}")
 
             print(f"Successfully opened {url}.")
-            print(f"Waiting for {wait_hours} hours before entering indefinite hold...")
-            print(f"Note: Cookies and session are being saved to '{user_data_dir}'.")
-
-            # Periodic activity loop
-            total_seconds = wait_hours * 3600
-            elapsed = 0
-
-            while elapsed < total_seconds:
-                await simulate_activity(page)
-                # Randomize interval slightly (approx 5 mins)
-                interval = random.randint(240, 360)
-                await asyncio.sleep(interval)
-                elapsed += interval
-                if elapsed % 1800 == 0:  # Log every 30 mins
-                    print(f"  [Status] {elapsed / 3600:.1f} hours elapsed...")
-
-            print(f"Initial {wait_hours} hours wait complete. Session will now remain open indefinitely.")
+            print(f"--- Starting Advanced Execution Monitoring ---")
+            print(f"Script will now keep the code running and handle disconnections.")
+            start_time = asyncio.get_event_loop().time()
 
             while True:
+                # 1. Simulate Human Activity (Anti-Detection)
                 await simulate_activity(page)
-                await asyncio.sleep(random.randint(500, 700)) 
+                
+                # 2. Advanced Session Guard (Reconnect & Auto-Run)
+                try:
+                    # Check and click common popups like 'Reconnect', 'Dismiss', or 'Stay'
+                    for action_text in ["Reconnect", "Dismiss", "Stay", "Wait", "Close"]:
+                        btn = page.get_by_text(action_text, exact=False).first
+                        if await btn.is_visible():
+                            print(f"  [Monitor] System popup detected. Clicking '{action_text}'...")
+                            await btn.click()
+                            await asyncio.sleep(5)
+
+                    # Check if Execution has stopped
+                    # Agar 'Run All' button visible hai, iska matlab kernel idle hai ya ruk gaya hai
+                    run_all_btn = page.get_by_text("Run All", exact=True).first
+                    if await run_all_btn.is_visible():
+                        print("  [Monitor] Execution stopped or kernel idle. Re-triggering 'Run All'...")
+                        await run_all_btn.evaluate("el => el.scrollIntoView({ behavior: 'auto', block: 'center' })")
+                        await asyncio.sleep(2)
+                        await run_all_btn.click()
+                except Exception as monitor_err:
+                    # Monitoring errors ko ignore karenge taaki loop chalta rahe
+                    pass
+
+                # 3. Log Status
+                elapsed = asyncio.get_event_loop().time() - start_time
+                if int(elapsed) % 1800 < 450: # Har 30 mins mein status update
+                    print(f"  [Status] Script has been managing execution for {elapsed / 3600:.1f} hours.")
+
+                # 4. Randomized Wait (Bots se bachne ke liye interval change karte rahenge)
+                await asyncio.sleep(random.randint(180, 420)) 
 
     except asyncio.CancelledError:
         print("Script interrupted by user.")
